@@ -1178,10 +1178,10 @@ class VideoProcessor:
                     
                     # Encode frames as JPEG and send over network connection
                     JPEG_QUALITY = 90
-                    _, jpeg_processed_frame = cv2.imencode('.jpg', processed_frame, [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY])
-                    _, jpeg_drawn_layout = cv2.imencode('.jpg', drawn_layout, [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY])
-                    _, jpeg_heatmap_1 = cv2.imencode('.jpg', overlay_heatmaps_dict['a'], [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY])
-                    _, jpeg_heatmap_2 = cv2.imencode('.jpg', overlay_heatmaps_dict['b'], [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY])
+                    _, jpeg_processed_frame = cv2.imencode('.jpg', processed_frame)
+                    _, jpeg_drawn_layout = cv2.imencode('.jpg', drawn_layout)
+                    _, jpeg_heatmap_1 = cv2.imencode('.jpg', overlay_heatmaps_dict['a'])
+                    _, jpeg_heatmap_2 = cv2.imencode('.jpg', overlay_heatmaps_dict['b'])
                     
 
                     combined_data = f"{base64.b64encode(jpeg_processed_frame).decode('utf-8')};{base64.b64encode(jpeg_drawn_layout).decode('utf-8')};{base64.b64encode(jpeg_heatmap_1).decode('utf-8')};{base64.b64encode(jpeg_heatmap_2).decode('utf-8')}"
