@@ -1,4 +1,5 @@
 # Soccer Players Analysis System
+[![ru](https://img.shields.io/badge/lang-es-yellow.svg)](https://github.com/yskaaks/soccer-analytics/blob/terralink-demo-day/README.ru.md)
 
 ## Introduction
 This repository introduces a prototype computer vision system specifically tailored for the analysis of soccer players within images and videos. It serves as a foundational Proof of Concept (PoC) that leverages the latest in object detection technology, YOLOv8, to detect and track players, categorize them by team colors, and map their movements onto a 2D representation of the soccer field. The system integrates three core components:
