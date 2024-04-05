@@ -59,7 +59,7 @@ conda activate soccer-env
 Установите PyTorch в соответствии с характеристиками вашей системы. Используйте инструмент со страницы [Get Started](https://pytorch.org/get-started/locally/) PyTorch, чтобы найти соответствующую команду для вашей конфигурации. Например, если вы используете CUDA 11.8, команда может выглядеть так:
 
 ```bash
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 ```
 Эта установка может занять некоторое время.
 
