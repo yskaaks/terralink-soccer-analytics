@@ -1319,5 +1319,5 @@ if __name__ == "__main__":
     
     # Create video processing object and process video
     processor = VideoProcessor(config, object_detector, goal_polygon, team_players_list, ball_object, layout_projector, database_writer, report_writer)
-    processor.process_video()
-    # asyncio.run(processor.main())
+    # processor.process_video()
+    asyncio.run(processor.main())
