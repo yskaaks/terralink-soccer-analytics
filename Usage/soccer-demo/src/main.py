@@ -93,9 +93,12 @@ class DatabaseWriter:
         # Create a new 'analytics' table with the desired schema
         self.cursor.execute('''CREATE TABLE analytics (
                                 frame INTEGER,
-                                a TEXT,
-                                b TEXT,
-                                ball TEXT,
+                                a_x REAL,
+                                a_y REAL,
+                                b_x REAL,
+                                b_y REAL,
+                                ball_x REAL,
+                                ball_y REAL,
                                 ball_possession TEXT,
                                 goals_team_a INTEGER,
                                 goals_team_b INTEGER,
@@ -115,20 +118,26 @@ class DatabaseWriter:
 
         # Extract data for each column, ensuring any NumPy arrays are converted to lists
         current_timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        a_str = json.dumps([convert_to_list(item) for item in analytics_dict.get('a', [])])
-        b_str = json.dumps([convert_to_list(item) for item in analytics_dict.get('b', [])])
-        ball_str = json.dumps([convert_to_list(item) for item in analytics_dict.get('ball', [])])
-        ball_possession_str = json.dumps([convert_to_list(item) for item in analytics_dict.get('ball_possession', [])])
         
+        a_coords = analytics_dict.get('a', [(None, None)])[0]
+        b_coords = analytics_dict.get('b', [(None, None)])[0]
+        ball_coords = analytics_dict.get('ball', [(None, None)])[0]
+        
+        a_x, a_y = a_coords if a_coords is not None else (None, None)
+        b_x, b_y = b_coords if b_coords is not None else (None, None)
+        ball_x, ball_y = ball_coords if ball_coords is not None else (None, None)
+        
+        ball_possession_str = json.dumps(analytics_dict.get('ball_possession', []))
+
         # Assume frame_number is calculated or obtained elsewhere
         frame_number = frame_number_p  # Example to derive frame_number, adjust as necessary
         # Get the goal counts for each team from the scores_dict
         goals_team_a = scores_dict.get('a', 0)
         goals_team_b = scores_dict.get('b', 0)
         # Insert the data into the database
-        self.cursor.execute('''INSERT INTO analytics (frame, a, b, ball, ball_possession, goals_team_a, goals_team_b, timestamp)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
-                            (frame_number, a_str, b_str, ball_str, ball_possession_str, goals_team_a, goals_team_b, current_timestamp))
+        self.cursor.execute('''INSERT INTO analytics (frame, a_x, a_y, b_x, b_y, ball_x, ball_y, ball_possession, goals_team_a, goals_team_b, timestamp)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                            (frame_number, a_x, a_y, b_x, b_y, ball_x, ball_y, ball_possession_str, goals_team_a, goals_team_b, current_timestamp))
         self.conn.commit()
 
     def close_db(self):
@@ -1310,5 +1319,5 @@ if __name__ == "__main__":
     
     # Create video processing object and process video
     processor = VideoProcessor(config, object_detector, goal_polygon, team_players_list, ball_object, layout_projector, database_writer, report_writer)
-    # processor.process_video()
-    asyncio.run(processor.main())
+    processor.process_video()
+    # asyncio.run(processor.main())
