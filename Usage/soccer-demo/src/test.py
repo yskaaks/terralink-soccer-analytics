@@ -93,9 +93,12 @@ class DatabaseWriter:
         # Create a new 'analytics' table with the desired schema
         self.cursor.execute('''CREATE TABLE analytics (
                                 frame INTEGER,
-                                a TEXT,
-                                b TEXT,
-                                ball TEXT,
+                                a_x REAL,
+                                a_y REAL,
+                                b_x REAL,
+                                b_y REAL,
+                                ball_x REAL,
+                                ball_y REAL,
                                 ball_possession TEXT,
                                 goals_team_a INTEGER,
                                 goals_team_b INTEGER,
@@ -115,20 +118,26 @@ class DatabaseWriter:
 
         # Extract data for each column, ensuring any NumPy arrays are converted to lists
         current_timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        a_str = json.dumps([convert_to_list(item) for item in analytics_dict.get('a', [])])
-        b_str = json.dumps([convert_to_list(item) for item in analytics_dict.get('b', [])])
-        ball_str = json.dumps([convert_to_list(item) for item in analytics_dict.get('ball', [])])
-        ball_possession_str = json.dumps([convert_to_list(item) for item in analytics_dict.get('ball_possession', [])])
         
+        a_coords = analytics_dict.get('a', [(None, None)])[0]
+        b_coords = analytics_dict.get('b', [(None, None)])[0]
+        ball_coords = analytics_dict.get('ball', [(None, None)])[0]
+        
+        a_x, a_y = a_coords if a_coords is not None else (None, None)
+        b_x, b_y = b_coords if b_coords is not None else (None, None)
+        ball_x, ball_y = ball_coords if ball_coords is not None else (None, None)
+        
+        ball_possession_str = json.dumps(analytics_dict.get('ball_possession', []))
+
         # Assume frame_number is calculated or obtained elsewhere
         frame_number = frame_number_p  # Example to derive frame_number, adjust as necessary
         # Get the goal counts for each team from the scores_dict
         goals_team_a = scores_dict.get('a', 0)
         goals_team_b = scores_dict.get('b', 0)
         # Insert the data into the database
-        self.cursor.execute('''INSERT INTO analytics (frame, a, b, ball, ball_possession, goals_team_a, goals_team_b, timestamp)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
-                            (frame_number, a_str, b_str, ball_str, ball_possession_str, goals_team_a, goals_team_b, current_timestamp))
+        self.cursor.execute('''INSERT INTO analytics (frame, a_x, a_y, b_x, b_y, ball_x, ball_y, ball_possession, goals_team_a, goals_team_b, timestamp)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                            (frame_number, a_x, a_y, b_x, b_y, ball_x, ball_y, ball_possession_str, goals_team_a, goals_team_b, current_timestamp))
         self.conn.commit()
 
     def close_db(self):
@@ -179,16 +188,26 @@ class HSVRangeSetup:
         from detections for specified labels of interest.
         """
         detected_crops = []
+        cap = None  # Initialize cap variable to None
         try:
-            cap = cv2.VideoCapture(video_path, cv2.CAP_DSHOW)
+            if isinstance(video_path, int) or (isinstance(video_path, str) and video_path.isdigit()):
+                print(video_path)
+                cap = cv2.VideoCapture(int(video_path))
+            else:
+                cap = cv2.VideoCapture(video_path)
             if not cap.isOpened():
                 raise ValueError("Error: Could not open video.")
 
             total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            random_frames = sorted(random.sample(range(total_frames), 5))
+            if total_frames > 0:
+                random_frames = sorted(random.sample(range(total_frames), min(5, total_frames)))
+            else:
+                # If total_frames is 0 or negative (e.g., for camera feed), process the first 5 frames
+                random_frames = range(5)
 
             for frame_index in tqdm(random_frames, desc="Detecting players"):
-                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
+                if total_frames > 0:
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
                 ret, frame = cap.read()
                 if not ret:
                     continue  # Skip if the frame could not be read
@@ -200,13 +219,18 @@ class HSVRangeSetup:
                         xmin, ymin, xmax, ymax = [int(x) for x in det.bbox]
                         crop = frame[ymin:ymax, xmin:xmax]
                         detected_crops.append(crop)
+        except Exception as e:
+            print(f"Error: {str(e)}")
         finally:
-            cap.release()
+            if cap is not None:  # Check if cap is not None before releasing
+                cap.release()
 
         return detected_crops
-
     # Function to resize and concatenate crops in a grid format
     def scale_and_concat_crops(self, crops, max_crops_per_row=10, max_crops_per_col=5, display_height=300, display_width=800):
+        if not crops:
+            return np.zeros((display_height, display_width, 3), dtype=np.uint8)
+        
         # Calculate the number of rows needed for the grid
         num_rows = min(math.ceil(len(crops) / max_crops_per_row), max_crops_per_col)
     
@@ -266,26 +290,28 @@ class HSVRangeSetup:
     
     def setup_hsv_ranges(self, object_detector):
         if os.path.exists(self.config.get('hsv_ranges_path', '')):
+            print("HSV ranges file found. Loading HSV ranges...")
             return self.load_hsv_ranges(self.config['hsv_ranges_path'])
-    
+
         detected_crops = self.extract_and_detect_frames(self.config['input_video_path'],
                                                         object_detector,
                                                         self.labels_of_interest)
-    
+
         concatenated_crops = self.scale_and_concat_crops(detected_crops)
         segmentation = VideoSegmentation('Segmentation')
         hsv_ranges_dict = {}
         alphabet = iter(string.ascii_lowercase)  # Create an iterator over the alphabet
-    
+
         print("Instructions:")
         print("- Press 'y' if you are satisfied with the HSV range and want to move to the next class.")
         print("- Press 'Esc' to exit the program.")
-    
+
         for _ in range(self.n_classes):
+            print(f"Setting up HSV range for class {_ + 1}/{self.n_classes}")
             while True:
                 lower_bound, upper_bound = segmentation.update_segmentation(concatenated_crops)
                 key = cv2.waitKey(1) & 0xFF
-    
+
                 if key == ord('y'):
                     unique_id = self.generate_unique_id(lower_bound, upper_bound)
                     # Calculate the midpoint of the hue range for RGB color
@@ -306,11 +332,12 @@ class HSVRangeSetup:
                     }
                     break
                 elif key == 27:  # Escape key
+                    print("Exiting the program.")
                     cv2.destroyAllWindows()
                     sys.exit()
-    
+
             segmentation.reset_trackbars()
-    
+
         cv2.destroyAllWindows()
         self.save_hsv_ranges(hsv_ranges_dict, self.config['hsv_ranges_path'])
         return self.load_hsv_ranges(self.config['hsv_ranges_path'])
@@ -369,7 +396,7 @@ class HomographySetup:
 
     def load_and_prepare_images(self):
         layout_img = cv2.imread(self.config['input_layout_image'])
-        cap = cv2.VideoCapture(self.config['input_video_path'], cv2.CAP_DSHOW)
+        cap = cv2.VideoCapture(self.config['input_video_path'])
         ret, frame = cap.read()
         cap.release()
 
@@ -519,7 +546,7 @@ class GoalPolygon:
         cv2.imshow("Goal Polygon", self.first_frame)
     
     def load_first_frame(self):
-        cap = cv2.VideoCapture(self.config['input_video_path'], cv2.CAP_DSHOW)
+        cap = cv2.VideoCapture(self.config['input_video_path'])
         ret, frame = cap.read()
         cap.release()
 
@@ -770,7 +797,7 @@ class TeamPlayer:
 # Ball class ------------------------------------------------------------------
 class Ball:
     def __init__(self, config):
-        self.color = (255, 255, 255)
+        self.color = (255, 165, 0)
         self.last_team_id = None
         self.last_team_letter = None
         self.center_point = None
@@ -1055,7 +1082,7 @@ class VideoProcessor:
         return frame, drawn_layout, overlay_heatmaps_dict
         
     def process_video(self):
-        cap = cv2.VideoCapture(self.config['input_video_path'], cv2.CAP_DSHOW)
+        cap = cv2.VideoCapture(self.config['input_video_path'])
     
         # Check if video opened successfully
         if not cap.isOpened():
@@ -1130,9 +1157,9 @@ class VideoProcessor:
         # Open video capture
         input_video_path = self.config['input_video_path']
         if input_video_path == 0 or (isinstance(input_video_path, str) and input_video_path.isdigit()):
-            cap = cv2.VideoCapture(int(input_video_path), cv2.CAP_DSHOW)
+            cap = cv2.VideoCapture(int(input_video_path))
         else:
-            cap = cv2.VideoCapture(input_video_path, cv2.CAP_DSHOW)
+            cap = cv2.VideoCapture(input_video_path)
         
         # Check if video opened successfully
         if not cap.isOpened():
@@ -1142,11 +1169,6 @@ class VideoProcessor:
         # Get video frame width, height, and FPS for the output video
         frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        print(frame_height)
-        print(frame_width)
-        frame_width = 1280
-        frame_height = 720
-        print("Width/Height: ", frame_width, frame_height)
         self.fps = cap.get(cv2.CAP_PROP_FPS)
         self.layout_projector.fps = self.fps
         
@@ -1163,7 +1185,6 @@ class VideoProcessor:
             while cap.isOpened():
                 ret, frame = cap.read()
                 if ret:
-                    frame = cv2.resize(frame, (frame_width, frame_height))
                     processed_frame, drawn_layout, overlay_heatmaps_dict = self.process_frame(frame)
                     
                     # Write processed frame and layout to output video
@@ -1234,21 +1255,19 @@ class VideoProcessor:
         layout_out_writer = cv2.VideoWriter(self.config['layout_video_path'], self.fourcc, self.fps, (layout_width, layout_height))
         
         return heatmap_outs_dict, layout_out_writer
-
 # Main function ===============================================================
 if __name__ == "__main__":
     # Initialize the parser
     parser = argparse.ArgumentParser(description='Process video analysis with custom configuration.')
 
     # Adding arguments
-    parser.add_argument('--input_video_path', type=str, default='0' , help='Path to input video')
+    parser.add_argument('--input_video_path', type=str, default='0', help='Path to input video')
     parser.add_argument('--player_labels', nargs='+', type=int, default=[2, 3], help='Player labels')
     parser.add_argument('--ball_labels', nargs='+', type=int, default=[1], help='Ball labels')
     parser.add_argument('--n_classes', type=int, default=2, help='Number of classes')
     parser.add_argument('--input_layout_image', type=str, default=r'C:\Users\shysk\Documents\soccer-analytics\Datasets\soccer field layout\soccer_field_layout.png', help='Path to input layout image')
     parser.add_argument('--yolo_model_path', type=str, default=r'C:\Users\shysk\Documents\soccer-analytics\Models\yolov8-demo-model\train\weights\nano\best.pt', help='Path to YOLO model')
     parser.add_argument('--output_base_dir', type=str, default=r'C:\Users\shysk\Documents\soccer-analytics\Usage\soccer-demo\outputs', help='Base directory for outputs')
-
     # Parse the arguments
     args = parser.parse_args()
 
@@ -1277,35 +1296,28 @@ if __name__ == "__main__":
     # HSV Ranges setup
     hsv_setup = HSVRangeSetup(config)
     teams_dict = hsv_setup.setup_hsv_ranges(object_detector)
-    print("hsv done")
 
     # Include the paths to the heatmap images and videos
     config = create_heatmaps_dirs(config, teams_dict)
-    print("heatmaps done")
 
     # H Matrix setup
     homography_setup = HomographySetup(config)
     H = homography_setup.compute_homography_matrix()
-    print("homography done")
-
+    
     # Create layout registration object
     layout_projector = LayoutProjector(config, H, teams_dict)
-    print("layout_projector done")
-
+    
     #2. Analysis stage --------------------------------------------------------
     # Goal polygon setup
     goal_polygon = GoalPolygon(config, teams_dict)
-    print("goal_polygon done")
-
+    
     # Team players list
     team_players_list = [TeamPlayer(config, key, teams_dict) for key in teams_dict.keys()]
-    print("team_players_list done")
-
+    
     # Create ball object
     ball_object = Ball(config)
-    print("ball_object done")
+    
     # Create video processing object and process video
     processor = VideoProcessor(config, object_detector, goal_polygon, team_players_list, ball_object, layout_projector, database_writer, report_writer)
     # processor.process_video()
-    print("processor done")
     asyncio.run(processor.main())
