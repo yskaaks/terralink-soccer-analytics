@@ -192,9 +192,9 @@ class HSVRangeSetup:
         try:
             if isinstance(video_path, int) or (isinstance(video_path, str) and video_path.isdigit()):
                 print(video_path)
-                cap = cv2.VideoCapture(int(video_path))
+                cap = cv2.VideoCapture(int(video_path), cv2.CAP_DSHOW)
             else:
-                cap = cv2.VideoCapture(video_path)
+                cap = cv2.VideoCapture(video_path, cv2.CAP_DSHOW)
             if not cap.isOpened():
                 raise ValueError("Error: Could not open video.")
 
@@ -396,7 +396,7 @@ class HomographySetup:
 
     def load_and_prepare_images(self):
         layout_img = cv2.imread(self.config['input_layout_image'])
-        cap = cv2.VideoCapture(self.config['input_video_path'])
+        cap = cv2.VideoCapture(self.config['input_video_path'], cv2.CAP_DSHOW)
         ret, frame = cap.read()
         cap.release()
 
@@ -546,7 +546,7 @@ class GoalPolygon:
         cv2.imshow("Goal Polygon", self.first_frame)
     
     def load_first_frame(self):
-        cap = cv2.VideoCapture(self.config['input_video_path'])
+        cap = cv2.VideoCapture(self.config['input_video_path'], cv2.CAP_DSHOW)
         ret, frame = cap.read()
         cap.release()
 
@@ -1082,7 +1082,7 @@ class VideoProcessor:
         return frame, drawn_layout, overlay_heatmaps_dict
         
     def process_video(self):
-        cap = cv2.VideoCapture(self.config['input_video_path'])
+        cap = cv2.VideoCapture(self.config['input_video_path'], cv2.CAP_DSHOW)
     
         # Check if video opened successfully
         if not cap.isOpened():
@@ -1144,22 +1144,28 @@ class VideoProcessor:
         for key, heatmap in overlay_heatmaps_dict.items():
             cv2.imwrite(config['output_image_heatmaps'][key], heatmap)
 
-    async def send_processed_video_frames(self, websocket):
+    def send_processed_video_frames(self, host='0.0.0.0', port=8080):
         """
         Sends processed video frames over a network connection.
-
         Args:
             host (str, optional): The IP address or hostname to bind the server socket to. Defaults to '0.0.0.0'.
             port (int, optional): The port number to bind the server socket to. Defaults to 8080.
         """
-
-
+        # Set up server socket for receiving client connections
+        server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server_socket.bind((host, port))
+        server_socket.listen()
+        print(f"Listening for client connections on {host}:{port}")
+        # Accept client connection
+        conn, addr = server_socket.accept()
+        print(f"Connection from {addr}")
         # Open video capture
         input_video_path = self.config['input_video_path']
         if input_video_path == 0 or (isinstance(input_video_path, str) and input_video_path.isdigit()):
-            cap = cv2.VideoCapture(int(input_video_path))
+            cap = cv2.VideoCapture(int(input_video_path), cv2.CAP_DSHOW)
         else:
-            cap = cv2.VideoCapture(input_video_path)
+            cap = cv2.VideoCapture(input_video_path, cv2.CAP_DSHOW)
         
         # Check if video opened successfully
         if not cap.isOpened():
@@ -1176,7 +1182,6 @@ class VideoProcessor:
         self.fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         out = cv2.VideoWriter(self.config['output_video_path'], self.fourcc, self.fps, (frame_width, frame_height))
         heatmap_outs_dict, layout_out_writer = self.initialize_heatmap_layout_output_writers()
-
         # Handling unknown total frame count for live camera feed
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) if cap.get(cv2.CAP_PROP_FRAME_COUNT) > 0 else float('inf')
         
@@ -1205,29 +1210,22 @@ class VideoProcessor:
                     
                     # Encode frames as JPEG and send over network connection
                     JPEG_QUALITY = 90
-                    _, jpeg_processed_frame = cv2.imencode('.jpg', processed_frame)
-                    _, jpeg_drawn_layout = cv2.imencode('.jpg', drawn_layout)
-                    _, jpeg_heatmap_1 = cv2.imencode('.jpg', overlay_heatmaps_dict['a'])
-                    _, jpeg_heatmap_2 = cv2.imencode('.jpg', overlay_heatmaps_dict['b'])
-                    
-
-                    combined_data = f"{base64.b64encode(jpeg_processed_frame).decode('utf-8')};{base64.b64encode(jpeg_drawn_layout).decode('utf-8')};{base64.b64encode(jpeg_heatmap_1).decode('utf-8')};{base64.b64encode(jpeg_heatmap_2).decode('utf-8')}"
+                    _, jpeg_processed_frame = cv2.imencode('.jpg', processed_frame, [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY])
+                    _, jpeg_drawn_layout = cv2.imencode('.jpg', drawn_layout, [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY])
+                    _, jpeg_heatmap_1 = cv2.imencode('.jpg', overlay_heatmaps_dict['a'], [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY])
+                    _, jpeg_heatmap_2 = cv2.imencode('.jpg', overlay_heatmaps_dict['b'], [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY])
                     # Pack and send data over network connection
-                    
-                    try:
-                        await websocket.send(combined_data)
-                    except websockets.exceptions.ConnectionClosed:
-                        print("WebSocket connection closed. Stopping stream.")
-                        break
-
+                    data = pickle.dumps((jpeg_processed_frame, jpeg_drawn_layout, jpeg_heatmap_1, jpeg_heatmap_2))
+                    message = struct.pack("Q", len(data)) + data
+                    conn.sendall(message)
                     pbar.update(1)
                 else:
                     break
-
         # Release resources
         cap.release()
         out.release()
         layout_out_writer.release()
+        conn.close()
         
         for out_writer in heatmap_outs_dict.values():
             out_writer.release()
@@ -1237,11 +1235,6 @@ class VideoProcessor:
         # Save final heatmaps
         for key, heatmap in overlay_heatmaps_dict.items():
             cv2.imwrite(self.config['output_image_heatmaps'][key], heatmap)
-    async def main(self):
-        async with websockets.serve(self.send_processed_video_frames, "localhost", 3000):
-            await asyncio.Future()
-
-
 
     def initialize_heatmap_layout_output_writers(self):
         heatmap_outs_dict = {}
@@ -1319,5 +1312,6 @@ if __name__ == "__main__":
     
     # Create video processing object and process video
     processor = VideoProcessor(config, object_detector, goal_polygon, team_players_list, ball_object, layout_projector, database_writer, report_writer)
+    processor.send_processed_video_frames()
     # processor.process_video()
-    asyncio.run(processor.main())
+    # asyncio.run(processor.main())
